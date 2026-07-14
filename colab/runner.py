@@ -7,7 +7,7 @@
 # !pip -q install kagglehub shapely "albumentations==1.4.24"
 
 # %% [2] Clone the pipeline repo  (EDIT THE URL after you push)
-REPO_URL = "https://github.com/<your-user>/hv-doc-sg.git"
+REPO_URL = "https://github.com/nikhilss05/hv-document-segmentation"
 # !git clone $REPO_URL /content/hv-doc-sg
 
 # %% [3] Download the dataset from Kaggle
