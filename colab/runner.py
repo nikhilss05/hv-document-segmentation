@@ -47,6 +47,11 @@ print(C.agreement_summary(iou_df))
 C.plot_agreement_histogram(iou_df)
 C.visualize_worst(iou_df, rounds, cfg, k=5)
 
+# %% [6b] Multi-document labels — leaderboard shows ~1.5 docs/image on test
+print(C.multi_instance_summary(rounds))
+multi = C.multi_instance_images(rounds)
+print("examples (any round):", multi["any"][:10])
+
 # %% [7] STEP 3a — overfit-10 sanity check (~2-3 min; F1@0.90 should -> 1.0)
 T.train(cfg, epochs=40, batch_size=4, overfit=10, out_dir="/content/overfit",
         num_workers=2)
@@ -66,14 +71,23 @@ val_names, val_gt = I.val_split_with_gt(cfg)
 device = "cuda" if torch.cuda.is_available() else "cpu"
 val_probs = T.predict_probs(model, cfg, val_names, device)
 
-sweep = I.sweep_thresholds(val_probs, val_gt)
-display(sweep)
-BEST_THR = float(sweep.loc[sweep["F1@0.90"].idxmax(), "threshold"])
+# multi-instance extraction is now the default (mode="all"): every connected
+# component with area >= 0.5% of the mask AND mean inside-probability >= 0.5.
+# Tune min_area_frac / min_mean_prob here between submissions.
+POST = dict(mode="all", min_area_frac=0.005, min_mean_prob=0.5,
+            method="approx", eps_frac=0.005)
 
-post_cmp = I.compare_postprocess(val_probs, val_gt, BEST_THR)
-display(post_cmp)
-# pick the winning postprocess config from the table:
-POST = dict(method="approx", eps_frac=0.01)
+sweep = I.sweep_thresholds(val_probs, val_gt, **POST)
+display(sweep)
+BEST_THR = float(sweep.loc[sweep["F1@0.90"].idxmax(), "threshold"])  # ~0.35
+
+# old single-document behavior vs multi-instance, same threshold:
+display(I.compare_modes(val_probs, val_gt, BEST_THR,
+                        **{k: v for k, v in POST.items() if k != "mode"}))
+# polygon simplification: approxPolyDP eps sweep vs minAreaRect:
+display(I.compare_postprocess(val_probs, val_gt, BEST_THR,
+                              **{k: v for k, v in POST.items()
+                                 if k not in ("method", "eps_frac")}))
 
 # %% [10] Verify coordinate mapping: predictions on ORIGINAL val images
 from src import postprocess as P
@@ -81,6 +95,17 @@ import numpy as np
 val_preds = {n: P.prob_to_polygons(p.astype(np.float32), BEST_THR, **POST)
              for n, p in val_probs.items()}
 I.plot_overlays(cfg, val_preds, val_names[:5], gts=val_gt)
+
+# %% [10b] Multi-instance visual check on 10 TEST images — confirm second
+# documents are being caught by the new postprocessing
+test_names = D.list_test_images(cfg)
+sample = test_names[:10]
+test_probs = T.predict_probs(model, cfg, sample, device)
+test_preds = {n: P.prob_to_polygons(p.astype(np.float32), BEST_THR, **POST)
+              for n, p in test_probs.items()}
+print({n: len(v) for n, v in test_preds.items()})   # polygons per image
+I.plot_overlays(cfg, test_preds, sample[:5])
+I.plot_overlays(cfg, test_preds, sample[5:])
 
 # %% [11] STEP 5 — generate + validate pred.csv
 I.generate_pred_csv(model, cfg, "/content/pred.csv", BEST_THR, **POST)

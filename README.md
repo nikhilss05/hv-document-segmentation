@@ -11,7 +11,7 @@ instance P/R/F1 @ IoU ≥ 0.90. See [assignment.md](assignment.md).
 | `src/metrics.py` | instance P/R/F1 @ IoU 0.90 & 0.50 via exact shapely polygon IoU, pixel Dice |
 | `src/consensus.py` | pairwise agreement between the 3 annotation rounds, worst-case visualization, medoid GT, soft/majority consensus masks |
 | `src/train.py` | U-Net (`seg_common.py`), BCE+Dice on soft targets, cosine LR, AMP, checkpoint on val F1@0.90, `--overfit N` sanity mode |
-| `src/postprocess.py` | prob mask → largest contour → approxPolyDP / minAreaRect → normalized polygons |
+| `src/postprocess.py` | prob mask → connected components filtered by area + mean inside-probability (multi-document; `mode="largest"` = legacy) → approxPolyDP / minAreaRect → normalized polygons |
 | `src/infer.py` | threshold sweep, postprocess comparison, overlay checks, `pred.csv` generation + validation |
 | `colab/runner.py` | ordered Colab cells: installs → kagglehub → cache → consensus → sanity → train → tune → pred.csv |
 

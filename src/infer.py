@@ -73,15 +73,28 @@ def sweep_thresholds(probs: Dict[str, np.ndarray], gts,
 
 
 def compare_postprocess(probs: Dict[str, np.ndarray], gts, threshold: float,
-                        eps_fracs=(0.005, 0.01, 0.015, 0.02)) -> pd.DataFrame:
-    """approxPolyDP at several eps values vs minAreaRect, at a fixed threshold."""
+                        eps_fracs=(0.005, 0.01, 0.015, 0.02),
+                        **post_kwargs) -> pd.DataFrame:
+    """approxPolyDP at several eps values vs minAreaRect, at a fixed threshold.
+    Extra kwargs (mode, min_area_frac, min_mean_prob, ...) apply to every row."""
     rows = []
     for eps in eps_fracs:
         report = _evaluate_probs(probs, gts, threshold,
-                                 method="approx", eps_frac=eps)
+                                 method="approx", eps_frac=eps, **post_kwargs)
         rows.append({"method": f"approxPolyDP eps={eps}", **_row(report)})
-    report = _evaluate_probs(probs, gts, threshold, method="minrect")
+    report = _evaluate_probs(probs, gts, threshold, method="minrect",
+                             **post_kwargs)
     rows.append({"method": "minAreaRect", **_row(report)})
+    return pd.DataFrame(rows)
+
+
+def compare_modes(probs: Dict[str, np.ndarray], gts, threshold: float,
+                  **post_kwargs) -> pd.DataFrame:
+    """Old single-document behavior vs multi-instance extraction, side by side."""
+    rows = []
+    for mode in ("largest", "all"):
+        report = _evaluate_probs(probs, gts, threshold, mode=mode, **post_kwargs)
+        rows.append({"mode": mode, **_row(report)})
     return pd.DataFrame(rows)
 
 

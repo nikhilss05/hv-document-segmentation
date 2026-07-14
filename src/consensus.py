@@ -106,6 +106,35 @@ def visualize_worst(df: pd.DataFrame, rounds: Dict[int, D.Round], cfg: D.Config,
     return fig
 
 
+# --------------------------- multi-instance labels --------------------------
+def multi_instance_images(rounds: Dict[int, D.Round], names=None
+                          ) -> Dict[str, List[str]]:
+    """Image names whose label contains MORE THAN ONE (non-degenerate) polygon,
+    per round plus 'any' (union) and 'all' (agreed by every round). The test
+    set averages ~1.5 documents/image, so these tell us how much multi-doc
+    signal the train labels carry."""
+    if names is None:
+        names = sorted(rounds[1].keys())
+
+    def n_polys(polygons):
+        return sum(1 for p in (polygons or []) if p and len(p) >= 3)
+
+    per_round = {r: [n for n in names if n_polys(rounds[r].get(n)) > 1]
+                 for r in D.ROUND_IDS}
+    out = {f"round_{r}": v for r, v in per_round.items()}
+    sets = [set(v) for v in per_round.values()]
+    out["any"] = sorted(set().union(*sets))
+    out["all"] = sorted(set.intersection(*sets))
+    return out
+
+
+def multi_instance_summary(rounds: Dict[int, D.Round], names=None) -> pd.Series:
+    """Counts of multi-polygon images per round / any / all."""
+    return pd.Series({k: len(v)
+                      for k, v in multi_instance_images(rounds, names).items()},
+                     name="images with >1 polygon")
+
+
 # ----------------------------- consensus labels -----------------------------
 def medoid_annotations(rounds: Dict[int, D.Round], names=None
                        ) -> Dict[str, D.Polygons]:

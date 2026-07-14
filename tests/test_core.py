@@ -33,9 +33,20 @@ def test_metrics():
     assert rep["dice_mean"] == 1.0 and rep["iou"][0.9]["F1"] == 0.0
     assert M.union_iou([], []) == 1.0 and M.union_iou(gt, []) == 0.0
 
-    # two preds on one gt -> one TP one FP
-    tp, fp, fn = M.match_counts(gt + [square(0.7, 0.7, 0.9, 0.9)], gt, 0.9)
-    assert (tp, fp, fn) == (1, 1, 0)
+    # ---- multi-instance matching (test set has ~1.5 docs/image) ----
+    doc_a, doc_b = square(0.1, 0.1, 0.4, 0.4), square(0.6, 0.6, 0.9, 0.9)
+    # 2 GT + 2 preds, both exact -> 2 TP
+    assert M.match_counts([doc_a, doc_b], [doc_b, doc_a], 0.9) == (2, 0, 0)
+    # 2 GT + 1 pred -> 1 TP, 1 FN
+    assert M.match_counts([doc_a], [doc_a, doc_b], 0.9) == (1, 0, 1)
+    # 1 GT + 2 preds -> 1 TP, 1 FP
+    assert M.match_counts([doc_a, doc_b], [doc_a], 0.9) == (1, 1, 0)
+    # each pred may claim at most one GT: duplicate preds on one GT -> 1 TP 1 FP
+    assert M.match_counts([doc_a, doc_a], [doc_a], 0.9) == (1, 1, 0)
+    # aggregate report over a multi-polygon image
+    rep = M.evaluate_polygons({"a": [doc_a]}, {"a": [doc_a, doc_b]})
+    assert rep["iou"][0.9] == {**rep["iou"][0.9], "TP": 1, "FP": 0, "FN": 1}
+    assert rep["gt_instances"] == 2 and rep["pred_instances"] == 1
 
     # self-intersecting bowtie is healed, not crashed
     bowtie = [[0.1, 0.1], [0.9, 0.9], [0.9, 0.1], [0.1, 0.9]]
@@ -69,21 +80,55 @@ def test_postprocess_roundtrip():
     polys = P.prob_to_polygons(prob, threshold=0.5)
     assert M.union_iou(polys, expected) > 0.98
 
-    # tiny blob dropped by min_area_frac; largest_only keeps one contour
+    # tiny blob dropped by min_area_frac; mode="largest" keeps one contour
     noisy = mask.copy()
     noisy[5:10, 5:10] = 1
-    assert len(P.extract_polygons(noisy, largest_only=False)) == 1
-    assert len(P.extract_polygons(noisy, largest_only=False,
-                                  min_area_frac=0.0)) == 2
-    assert len(P.extract_polygons(noisy, largest_only=True,
-                                  min_area_frac=0.0)) == 1
+    assert len(P.extract_polygons(noisy, mode="all")) == 1
+    assert len(P.extract_polygons(noisy, mode="all", min_area_frac=0.0)) == 2
+    assert len(P.extract_polygons(noisy, mode="largest", min_area_frac=0.0)) == 1
 
     # empty mask -> empty list (serializes to "[]")
     assert P.extract_polygons(np.zeros((S, S), np.uint8)) == []
     print("test_postprocess_roundtrip OK")
 
 
+def test_postprocess_multi_instance():
+    S = 384
+    # two real documents + one low-confidence blob + one speckle
+    prob = np.full((S, S), 0.05, np.float32)
+    prob[40:180, 40:180] = 0.95          # doc A (large, confident)
+    prob[220:340, 200:360] = 0.90        # doc B (smaller, confident)
+    prob[300:330, 40:90] = 0.42          # noise: passes thr 0.35, mean < 0.5
+    prob[10:14, 350:354] = 0.99          # speckle: confident but ~16 px
+
+    expected = [square(40 / S, 40 / S, 180 / S, 180 / S),
+                square(200 / S, 220 / S, 360 / S, 340 / S)]
+
+    # new default pipeline: both documents, nothing else
+    polys = P.prob_to_polygons(prob, threshold=0.35, mode="all",
+                               min_area_frac=0.005, min_mean_prob=0.5)
+    assert len(polys) == 2, len(polys)
+    rep = M.evaluate_polygons({"a": polys}, {"a": expected})
+    assert rep["iou"][0.9] == {**rep["iou"][0.9], "TP": 2, "FP": 0, "FN": 0}
+
+    # legacy mode: recall capped at the single largest document
+    largest = P.prob_to_polygons(prob, threshold=0.35, mode="largest",
+                                 min_area_frac=0.005, min_mean_prob=0.5)
+    assert len(largest) == 1
+    assert M.match_counts(largest, expected, 0.9) == (1, 0, 1)
+
+    # disabling the mean-prob filter lets the low-confidence blob through
+    loose = P.prob_to_polygons(prob, threshold=0.35, mode="all",
+                               min_area_frac=0.005, min_mean_prob=0.0)
+    assert len(loose) == 3
+    # the speckle only appears once the area floor is dropped too
+    assert len(P.prob_to_polygons(prob, threshold=0.35, mode="all",
+                                  min_area_frac=0.0, min_mean_prob=0.0)) == 4
+    print("test_postprocess_multi_instance OK")
+
+
 if __name__ == "__main__":
     test_metrics()
     test_postprocess_roundtrip()
+    test_postprocess_multi_instance()
     print("ALL TESTS PASSED")
